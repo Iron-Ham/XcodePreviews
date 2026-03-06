@@ -155,6 +155,7 @@ public struct ProjectInjector {
     }
 
     // Forward SPM package product dependencies
+    previewTarget.packageProductDependencies = previewTarget.packageProductDependencies ?? []
     var seenPackages = Set<String>()
 
     for dep in depTargets {
