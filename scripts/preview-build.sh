@@ -25,11 +25,9 @@ set -e
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATES_DIR="${SCRIPT_DIR}/../templates"
 BUILD_DIR="/tmp/preview-build-$$"
 DEFAULT_SIMULATOR="iPhone 17 Pro"
 DEFAULT_OUTPUT="/tmp/preview-screenshot.png"
-DEFAULT_TIMEOUT=30
 
 # Colors for output
 RED='\033[0;31m'
@@ -56,15 +54,8 @@ trap cleanup EXIT
 
 # Parse arguments
 SWIFT_FILE=""
-PREVIEW_NAME=""
 SIMULATOR="$DEFAULT_SIMULATOR"
 OUTPUT_PATH="$DEFAULT_OUTPUT"
-PREVIEW_SIZE=""
-SCHEME=""
-PROJECT=""
-PACKAGE=""
-TARGET=""
-TIMEOUT="$DEFAULT_TIMEOUT"
 KEEP_APP="false"
 VERBOSE="false"
 
@@ -78,28 +69,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_PATH="$2"
             shift 2
             ;;
-        --size)
-            PREVIEW_SIZE="$2"
-            shift 2
-            ;;
-        --scheme)
-            SCHEME="$2"
-            shift 2
-            ;;
-        --project)
-            PROJECT="$2"
-            shift 2
-            ;;
-        --package)
-            PACKAGE="$2"
-            shift 2
-            ;;
-        --target)
-            TARGET="$2"
-            shift 2
-            ;;
-        --timeout)
-            TIMEOUT="$2"
+        --size|--scheme|--project|--package|--target|--timeout)
             shift 2
             ;;
         --keep-app)
@@ -121,11 +91,6 @@ while [[ $# -gt 0 ]]; do
         *)
             if [[ -z "$SWIFT_FILE" ]]; then
                 SWIFT_FILE="$1"
-            elif [[ -z "$PREVIEW_NAME" ]]; then
-                PREVIEW_NAME="$1"
-            else
-                log_error "Unexpected argument: $1"
-                exit 1
             fi
             shift
             ;;
@@ -156,7 +121,8 @@ find_simulator() {
 
 boot_simulator() {
     local udid="$1"
-    local state=$("$SCRIPT_DIR/preview-helper.rb" simulator-state "$udid" 2>/dev/null)
+    local state
+    state=$("$SCRIPT_DIR/preview-helper.rb" simulator-state "$udid" 2>/dev/null)
 
     if [[ "$state" != "Booted" ]]; then
         log_info "Booting simulator..."
@@ -213,10 +179,6 @@ generate_preview_app() {
     local view_name="$1"
     local swift_file="$2"
     local build_dir="$3"
-
-    # Copy the Swift file content
-    local swift_content
-    swift_content=$(cat "$swift_file")
 
     # Create the preview app project
     mkdir -p "$build_dir/PreviewApp/PreviewApp"

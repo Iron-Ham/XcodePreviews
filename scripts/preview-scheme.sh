@@ -50,8 +50,6 @@ PROJECT=""
 TARGET=""
 OUTPUT_PATH="/tmp/preview-scheme.png"
 SIMULATOR="iPhone 17 Pro"
-INSTALL="false"
-CLEAN="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -60,8 +58,7 @@ while [[ $# -gt 0 ]]; do
         --target) TARGET="$2"; shift 2 ;;
         --output) OUTPUT_PATH="$2"; shift 2 ;;
         --simulator) SIMULATOR="$2"; shift 2 ;;
-        --install) INSTALL="true"; shift ;;
-        --clean) CLEAN="true"; shift ;;
+        --install|--clean) shift ;;
         --help|-h) head -30 "$0" | tail -28; exit 0 ;;
         -*) log_error "Unknown option: $1"; exit 1 ;;
         *)

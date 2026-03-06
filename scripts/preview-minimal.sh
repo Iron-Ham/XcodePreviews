@@ -55,9 +55,6 @@ trap cleanup EXIT
 
 # Parse arguments
 SWIFT_FILE=""
-PREVIEW_NAME=""
-WORKSPACE=""
-PROJECT=""
 FRAMEWORKS_PATH=""
 SIMULATOR="$DEFAULT_SIMULATOR"
 OUTPUT_PATH="$DEFAULT_OUTPUT"
@@ -66,16 +63,7 @@ VERBOSE="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --preview)
-            PREVIEW_NAME="$2"
-            shift 2
-            ;;
-        --workspace)
-            WORKSPACE="$2"
-            shift 2
-            ;;
-        --project)
-            PROJECT="$2"
+        --preview|--workspace|--project)
             shift 2
             ;;
         --frameworks)
@@ -130,7 +118,6 @@ if [[ ! -f "$SWIFT_FILE" ]]; then
 fi
 
 SWIFT_FILE="$(cd "$(dirname "$SWIFT_FILE")" && pwd)/$(basename "$SWIFT_FILE")"
-FILENAME=$(basename "$SWIFT_FILE" .swift)
 
 log_info "Building minimal preview for: $SWIFT_FILE"
 

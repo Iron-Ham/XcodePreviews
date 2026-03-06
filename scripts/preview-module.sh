@@ -439,8 +439,6 @@ SWIFTEOF
     # Create Xcode project that links against built frameworks
     mkdir -p "$PREVIEW_HOST_DIR/PreviewHost.xcodeproj"
 
-    # Find all framework search paths needed
-    FRAMEWORK_SEARCH_PATHS="$FRAMEWORKS_DIR"
 
     # Generate project.pbxproj
     cat > "$PREVIEW_HOST_DIR/PreviewHost.xcodeproj/project.pbxproj" << 'PBXEOF'

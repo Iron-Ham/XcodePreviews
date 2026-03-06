@@ -37,10 +37,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 # Parse arguments
 SWIFT_FILE=""
 WORKSPACE=""
-BASE_SCHEME=""
 OUTPUT_PATH="/tmp/preview-inject.png"
 SIMULATOR="iPhone 17 Pro"
-CLEAN="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -49,7 +47,6 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --base-scheme)
-            BASE_SCHEME="$2"
             shift 2
             ;;
         --output)
@@ -61,7 +58,6 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --clean)
-            CLEAN="true"
             shift
             ;;
         --help|-h)
