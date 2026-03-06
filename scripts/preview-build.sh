@@ -238,23 +238,6 @@ let package = Package(
 )
 PACKAGE_EOF
 
-    # Copy the original Swift file
-    cp "$swift_file" "$build_dir/PreviewApp/PreviewApp/"
-
-    # Create the preview host app
-    cat > "$build_dir/PreviewApp/PreviewApp/PreviewHostApp.swift" << HOSTAPP_EOF
-import SwiftUI
-
-@main
-struct PreviewHostApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ${view_name}()
-        }
-    }
-}
-HOSTAPP_EOF
-
     # Create an Xcode project for building
     mkdir -p "$build_dir/PreviewApp.xcodeproj"
 
@@ -414,7 +397,7 @@ PBXPROJ_EOF
 
     # Copy source to the project
     mkdir -p "$build_dir/PreviewApp/PreviewApp"
-    cp "$swift_file" "$build_dir/PreviewApp/PreviewApp/TargetView.swift"
+    sed 's/@main//g' "$swift_file" > "$build_dir/PreviewApp/PreviewApp/TargetView.swift"
 
     cat > "$build_dir/PreviewApp/PreviewApp/PreviewHostApp.swift" << HOSTAPP_EOF
 import SwiftUI
