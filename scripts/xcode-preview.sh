@@ -104,11 +104,13 @@ done
 # Validation
 if [[ -z "$PROJECT" && -z "$WORKSPACE" ]]; then
     # Try to auto-detect
-    if [[ -f "*.xcworkspace" ]]; then
-        WORKSPACE=$(ls *.xcworkspace | head -1)
+    FOUND_WS=$(find . -maxdepth 1 -name "*.xcworkspace" -type d 2>/dev/null | grep -v ".xcodeproj" | head -1)
+    FOUND_PROJ=$(find . -maxdepth 1 -name "*.xcodeproj" -type d 2>/dev/null | head -1)
+    if [[ -n "$FOUND_WS" ]]; then
+        WORKSPACE="$FOUND_WS"
         log_info "Auto-detected workspace: $WORKSPACE"
-    elif [[ -f "*.xcodeproj" ]]; then
-        PROJECT=$(ls *.xcodeproj | head -1)
+    elif [[ -n "$FOUND_PROJ" ]]; then
+        PROJECT="$FOUND_PROJ"
         log_info "Auto-detected project: $PROJECT"
     else
         log_error "No project or workspace specified and none found in current directory"
