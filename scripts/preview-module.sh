@@ -250,7 +250,7 @@ SWIFTEOF
             -scheme PreviewHost \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -derivedDataPath "$BUILD_DIR/DerivedData" \
-            ${VERBOSE:+-quiet} 2>&1 | while read line; do log_verbose "$line"; done
+            $( [[ "$VERBOSE" != "true" ]] && echo "-quiet" ) 2>&1 | while read line; do log_verbose "$line"; done
     else
         log_error "Failed to generate Xcode project from package"
         exit 1
@@ -574,7 +574,7 @@ PBXEOF
         -scheme PreviewHost \
         -destination "platform=iOS Simulator,id=$SIM_UDID" \
         -derivedDataPath "$BUILD_DIR/PreviewDerivedData" \
-        ${VERBOSE:+-quiet} 2>&1 | while read line; do log_verbose "$line"; done
+        $( [[ "$VERBOSE" != "true" ]] && echo "-quiet" ) 2>&1 | while read line; do log_verbose "$line"; done
 
     BUILD_EXIT=${PIPESTATUS[0]}
     if [[ $BUILD_EXIT -ne 0 ]]; then
