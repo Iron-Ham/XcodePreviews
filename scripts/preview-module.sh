@@ -30,7 +30,7 @@
 #   # Single-app target
 #   preview-module.sh ContentView.swift --project MyApp.xcodeproj --target MyApp
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="/tmp/preview-module-$$"
@@ -250,7 +250,16 @@ SWIFTEOF
             -scheme PreviewHost \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -derivedDataPath "$BUILD_DIR/DerivedData" \
-            ${VERBOSE:+-quiet} 2>&1 | while read line; do log_verbose "$line"; done
+            "$( [[ "$VERBOSE" != "true" ]] && echo "-quiet" )" 2>&1 | while read line; do log_verbose "$line"; done
+
+        BUILD_EXIT=${PIPESTATUS[0]}
+        if [[ $BUILD_EXIT -ne 0 ]]; then
+            log_error "Failed to build preview host from package"
+            if [[ "$KEEP" != "true" ]]; then
+                log_info "Use --keep to preserve build artifacts for debugging"
+            fi
+            exit 1
+        fi
     else
         log_error "Failed to generate Xcode project from package"
         exit 1
@@ -439,8 +448,6 @@ SWIFTEOF
     # Create Xcode project that links against built frameworks
     mkdir -p "$PREVIEW_HOST_DIR/PreviewHost.xcodeproj"
 
-    # Find all framework search paths needed
-    FRAMEWORK_SEARCH_PATHS="$FRAMEWORKS_DIR"
 
     # Generate project.pbxproj
     cat > "$PREVIEW_HOST_DIR/PreviewHost.xcodeproj/project.pbxproj" << 'PBXEOF'
@@ -574,7 +581,7 @@ PBXEOF
         -scheme PreviewHost \
         -destination "platform=iOS Simulator,id=$SIM_UDID" \
         -derivedDataPath "$BUILD_DIR/PreviewDerivedData" \
-        ${VERBOSE:+-quiet} 2>&1 | while read line; do log_verbose "$line"; done
+        "$( [[ "$VERBOSE" != "true" ]] && echo "-quiet" )" 2>&1 | while read line; do log_verbose "$line"; done
 
     BUILD_EXIT=${PIPESTATUS[0]}
     if [[ $BUILD_EXIT -ne 0 ]]; then
