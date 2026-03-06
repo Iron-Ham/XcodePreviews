@@ -266,6 +266,7 @@ if grep -q "#Preview" "$SWIFT_FILE" 2>/dev/null; then
         exec "$PREVIEW_TOOL" preview \
             --file "$SWIFT_FILE" \
             --project "$PROJECT" \
+            ${WORKSPACE:+--workspace "$WORKSPACE"} \
             ${TARGET:+--target "$TARGET"} \
             --simulator "$SIMULATOR" \
             --output "$OUTPUT" \
