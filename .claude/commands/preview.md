@@ -63,6 +63,20 @@ For Swift files that only use system frameworks (SwiftUI, UIKit, Foundation):
   --output /tmp/preview.png
 ```
 
+#### Select a Named Preview
+
+When a file has multiple `#Preview` blocks, select one by name:
+
+```bash
+"${PREVIEW_BUILD_PATH:-$HOME/XcodePreviews}"/scripts/preview \
+  "<path-to-file.swift>" \
+  --project "<path.xcodeproj>" \
+  --preview-name "Dark Mode" \
+  --output /tmp/preview.png
+```
+
+Without `--preview-name`, the first `#Preview` in the file is used.
+
 #### Capture Current Simulator
 
 Just screenshot whatever is currently on screen:
