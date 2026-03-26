@@ -107,12 +107,21 @@ public struct SimulatorManager {
     }
   }
 
-  public func screenshot(udid: String, outputPath: String) throws {
-    do {
-      try runSimctlChecked(["io", udid, "screenshot", outputPath])
-    } catch SimulatorError.simctlFailed(let msg) {
-      throw SimulatorError.screenshotFailed(msg)
+  public func screenshot(udid: String, outputPath: String, retries: Int = 3, delaySeconds: UInt32 = 2) throws {
+    var lastError: String = ""
+    for attempt in 1...retries {
+      do {
+        try runSimctlChecked(["io", udid, "screenshot", outputPath])
+        return
+      } catch SimulatorError.simctlFailed(let msg) {
+        lastError = msg
+        if attempt < retries {
+          logVerbose("Screenshot attempt \(attempt)/\(retries) failed, retrying in \(delaySeconds)s...")
+          sleep(delaySeconds)
+        }
+      }
     }
+    throw SimulatorError.screenshotFailed(lastError)
   }
 
   public func terminate(udid: String, bundleID: String) {

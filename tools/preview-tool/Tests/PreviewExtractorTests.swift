@@ -119,9 +119,9 @@ final class PreviewExtractorExtractTests: XCTestCase {
     XCTAssertFalse(result.contains("My Title"))
   }
 
-  // MARK: 7. Multiple previews — only first extracted
+  // MARK: 7. Multiple previews — default extracts first
 
-  func testMultiplePreviewsOnlyFirstExtracted() throws {
+  func testMultiplePreviewsDefaultExtractsFirst() throws {
     let path = writeTempFile(content: """
       #Preview("First") {
         Text("First Preview")
@@ -136,6 +136,85 @@ final class PreviewExtractorExtractTests: XCTestCase {
     let result = try extractor.extract(from: path)
     XCTAssertTrue(result.contains("First Preview"))
     XCTAssertFalse(result.contains("Second Preview"))
+  }
+
+  // MARK: 7b. Multiple previews — select by name
+
+  func testMultiplePreviewsSelectByName() throws {
+    let path = writeTempFile(content: """
+      #Preview("Light Mode") {
+        Text("Light")
+      }
+
+      #Preview("Dark Mode") {
+        Text("Dark")
+      }
+      """)
+    defer { try? fm.removeItem(atPath: path) }
+
+    let light = try extractor.extract(from: path, named: "Light Mode")
+    XCTAssertTrue(light.contains("Text(\"Light\")"))
+    XCTAssertFalse(light.contains("Text(\"Dark\")"))
+
+    let dark = try extractor.extract(from: path, named: "Dark Mode")
+    XCTAssertTrue(dark.contains("Text(\"Dark\")"))
+    XCTAssertFalse(dark.contains("Text(\"Light\")"))
+  }
+
+  // MARK: 7c. Named preview — case-insensitive fallback
+
+  func testNamedPreviewCaseInsensitiveFallback() throws {
+    let path = writeTempFile(content: """
+      #Preview("My Custom View") {
+        Text("Found")
+      }
+      """)
+    defer { try? fm.removeItem(atPath: path) }
+
+    let result = try extractor.extract(from: path, named: "my custom")
+    XCTAssertTrue(result.contains("Text(\"Found\")"))
+  }
+
+  // MARK: 7d. Named preview — not found error
+
+  func testNamedPreviewNotFound() throws {
+    let path = writeTempFile(content: """
+      #Preview("Existing") {
+        Text("Here")
+      }
+      """)
+    defer { try? fm.removeItem(atPath: path) }
+
+    XCTAssertThrowsError(try extractor.extract(from: path, named: "Nonexistent")) { error in
+      let desc = "\(error)"
+      XCTAssertTrue(desc.contains("Nonexistent"))
+      XCTAssertTrue(desc.contains("Available: Existing"))
+    }
+  }
+
+  // MARK: 7e. List previews
+
+  func testListPreviews() throws {
+    let path = writeTempFile(content: """
+      #Preview("Alpha") {
+        Text("A")
+      }
+
+      #Preview {
+        Text("Unnamed")
+      }
+
+      #Preview("Beta") {
+        Text("B")
+      }
+      """)
+    defer { try? fm.removeItem(atPath: path) }
+
+    let list = try extractor.listPreviews(from: path)
+    XCTAssertEqual(list.count, 3)
+    XCTAssertEqual(list[0].name, "Alpha")
+    XCTAssertNil(list[1].name)
+    XCTAssertEqual(list[2].name, "Beta")
   }
 
   // MARK: 8. No preview found
