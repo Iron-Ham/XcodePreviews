@@ -8,6 +8,7 @@ struct PreviewArgs {
   var project: String?
   var workspace: String?
   var target: String?
+  var previewName: String?
   var simulator = "iPhone 17 Pro"
   var output = "/tmp/preview-dynamic.png"
   var keep = false
@@ -20,6 +21,7 @@ struct PreviewSPMArgs {
   var file = ""
   var packagePath = ""
   var module: String?
+  var previewName: String?
   var simulator = "iPhone 17 Pro"
   var output = "/tmp/preview-spm.png"
   var keep = false
@@ -53,6 +55,7 @@ func printUsage() {
       --project <path>      Xcode project file
       --workspace <path>    Xcode workspace file
       --target <name>       Module containing the file (auto-detected)
+      --preview-name <name> Select a named #Preview (default: first)
       --simulator <name>    Simulator (default: iPhone 17 Pro)
       --output <path>       Output screenshot path
       --keep                Keep the preview target after capture
@@ -62,6 +65,7 @@ func printUsage() {
       --file <path>         Swift file to preview
       --package <path>      Path to Package.swift (auto-detected from file)
       --module <name>       Module name (auto-detected from path)
+      --preview-name <name> Select a named #Preview (default: first)
       --simulator <name>    Simulator (default: iPhone 17 Pro)
       --output <path>       Output screenshot path
       --keep                Keep temporary project after capture
@@ -103,6 +107,11 @@ func parseArgs() -> Subcommand? {
         i += 1
         guard i < args.count else { return nil }
         pa.target = args[i]
+
+      case "--preview-name":
+        i += 1
+        guard i < args.count else { return nil }
+        pa.previewName = args[i]
 
       case "--simulator":
         i += 1
@@ -146,6 +155,11 @@ func parseArgs() -> Subcommand? {
         i += 1
         guard i < args.count else { return nil }
         spa.module = args[i]
+
+      case "--preview-name":
+        i += 1
+        guard i < args.count else { return nil }
+        spa.previewName = args[i]
 
       case "--simulator":
         i += 1
@@ -325,9 +339,12 @@ func runPreview(_ args: PreviewArgs) {
   }
 
   // Extract preview body
+  if let name = args.previewName {
+    log(.info, "Selecting preview: \"\(name)\"")
+  }
   let previewBody: String
   do {
-    previewBody = try extractor.extract(from: swiftFile)
+    previewBody = try extractor.extract(from: swiftFile, named: args.previewName)
   } catch {
     log(.error, "\(error)")
     exit(1)
@@ -524,8 +541,9 @@ func runPreview(_ args: PreviewArgs) {
   do {
     try sim.screenshot(udid: simUDID, outputPath: args.output)
   } catch {
-    log(.error, "\(error)")
-    cleanupAndExit(1)
+    log(.error, "Build succeeded but screenshot capture failed: \(error)")
+    // Exit code 2 = capture failure (distinct from exit 1 = build failure)
+    cleanupAndExit(2)
   }
 
   sim.terminate(udid: simUDID, bundleID: bundleID)
@@ -544,8 +562,9 @@ func runPreview(_ args: PreviewArgs) {
     print("PREVIEW_PATH=\(args.output)")
     cleanupAndExit(0)
   } else {
-    log(.error, "Failed to capture screenshot")
-    cleanupAndExit(1)
+    log(.error, "Build succeeded but screenshot file not found")
+    // Exit code 2 = capture failure
+    cleanupAndExit(2)
   }
 }
 
@@ -784,9 +803,12 @@ func runPreviewSPM(_ args: PreviewSPMArgs) {
 
   // Extract preview body
   let extractor = PreviewExtractor()
+  if let name = args.previewName {
+    log(.info, "Selecting preview: \"\(name)\"")
+  }
   let previewBody: String
   do {
-    previewBody = try extractor.extract(from: swiftFile)
+    previewBody = try extractor.extract(from: swiftFile, named: args.previewName)
   } catch {
     log(.error, "\(error)")
     exit(1)
@@ -939,8 +961,9 @@ func runPreviewSPM(_ args: PreviewSPMArgs) {
   do {
     try sim.screenshot(udid: simUDID, outputPath: args.output)
   } catch {
-    log(.error, "\(error)")
-    cleanupAndExit(1)
+    log(.error, "Build succeeded but screenshot capture failed: \(error)")
+    // Exit code 2 = capture failure (distinct from exit 1 = build failure)
+    cleanupAndExit(2)
   }
 
   sim.terminate(udid: simUDID, bundleID: bundleID)
@@ -959,8 +982,9 @@ func runPreviewSPM(_ args: PreviewSPMArgs) {
     print("PREVIEW_PATH=\(args.output)")
     cleanupAndExit(0)
   } else {
-    log(.error, "Failed to capture screenshot")
-    cleanupAndExit(1)
+    log(.error, "Build succeeded but screenshot file not found")
+    // Exit code 2 = capture failure
+    cleanupAndExit(2)
   }
 }
 

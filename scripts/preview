@@ -37,6 +37,7 @@ WORKSPACE=""
 SCHEME=""
 TARGET=""
 MODULE=""
+PREVIEW_NAME=""
 SIMULATOR="iPhone 17 Pro"
 OUTPUT="/tmp/preview.png"
 WAIT=3
@@ -96,6 +97,7 @@ while [[ $# -gt 0 ]]; do
         --scheme) SCHEME="$2"; shift 2 ;;
         --target) TARGET="$2"; shift 2 ;;
         --module) MODULE="$2"; shift 2 ;;
+        --preview-name) PREVIEW_NAME="$2"; shift 2 ;;
         --simulator) SIMULATOR="$2"; shift 2 ;;
         --output|-o) OUTPUT="$2"; shift 2 ;;
         --wait) WAIT="$2"; shift 2 ;;
@@ -203,6 +205,7 @@ if [[ -z "$PROJECT" && -z "$WORKSPACE" ]]; then
             --file "$SWIFT_FILE" \
             --package "$PACKAGE_SWIFT" \
             ${MODULE:+--module "$MODULE"} \
+            ${PREVIEW_NAME:+--preview-name "$PREVIEW_NAME"} \
             --simulator "$SIMULATOR" \
             --output "$OUTPUT" \
             ${KEEP:+--keep} \
@@ -263,15 +266,23 @@ if grep -q "#Preview" "$SWIFT_FILE" 2>/dev/null; then
         ensure_preview_tool
         # Run without exec so the scheme-build fallback below is reachable
         # if the dynamic injector fails. (fixes #30)
-        if "$PREVIEW_TOOL" preview \
+        # Exit codes: 0 = success, 1 = build failure (fallback may help),
+        #             2 = capture failure (fallback won't help)
+        "$PREVIEW_TOOL" preview \
             --file "$SWIFT_FILE" \
             --project "$PROJECT" \
             ${WORKSPACE:+--workspace "$WORKSPACE"} \
             ${TARGET:+--target "$TARGET"} \
+            ${PREVIEW_NAME:+--preview-name "$PREVIEW_NAME"} \
             --simulator "$SIMULATOR" \
             --output "$OUTPUT" \
-            ${VERBOSE:+--verbose}; then
+            ${VERBOSE:+--verbose}
+        TOOL_EXIT=$?
+        if [[ $TOOL_EXIT -eq 0 ]]; then
             exit 0
+        elif [[ $TOOL_EXIT -ne 1 ]]; then
+            # Non-build failure (e.g., capture failure) — don't fall back
+            exit $TOOL_EXIT
         fi
         log_warning "Dynamic preview injection failed, falling back to scheme build..."
     fi
