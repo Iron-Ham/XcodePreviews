@@ -286,6 +286,29 @@ else
     BUILD_FLAG="project"
 fi
 
+# Detect existing SourcePackages for SPM dependency resolution.
+# NOTE: This 3-tier search is intentionally duplicated in main.swift
+# (findClonedSourcePackagesDir). Keep both in sync when changing.
+CLONED_SOURCE_PACKAGES_DIR=""
+PROJ_DIR="$(dirname "${WORKSPACE:-$PROJECT}")"
+# Check workspace-adjacent SourcePackages/
+if [[ -d "$PROJ_DIR/SourcePackages" ]]; then
+    CLONED_SOURCE_PACKAGES_DIR="$PROJ_DIR/SourcePackages"
+# Check Tuist/.build/ (Tuist 4.x SPM resolution)
+elif [[ -d "$PROJ_DIR/Tuist/.build" ]]; then
+    CLONED_SOURCE_PACKAGES_DIR="$PROJ_DIR/Tuist/.build"
+else
+    # Search default DerivedData for matching project
+    PROJ_NAME="$(basename "${PROJECT:-$WORKSPACE}" | sed 's/\.\(xcodeproj\|xcworkspace\)$//')"
+    DD_MATCH="$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 1 -name "${PROJ_NAME}-*" -type d 2>/dev/null | head -1 || true)"
+    if [[ -n "$DD_MATCH" && -d "$DD_MATCH/SourcePackages" ]]; then
+        CLONED_SOURCE_PACKAGES_DIR="$DD_MATCH/SourcePackages"
+    fi
+fi
+if [[ -n "$CLONED_SOURCE_PACKAGES_DIR" ]]; then
+    log_info "Using existing source packages: $CLONED_SOURCE_PACKAGES_DIR"
+fi
+
 SCHEMES=$(xcodebuild -${BUILD_FLAG} "$BUILD_PATH" -list 2>/dev/null | \
     grep -A100 "Schemes:" | tail -n +2 | sed 's/^[ \t]*//' | grep -v "^$" | head -20)
 
@@ -320,4 +343,5 @@ exec "$SCRIPT_DIR/xcode-preview.sh" \
     --simulator "$SIMULATOR" \
     --output "$OUTPUT" \
     --wait "$WAIT" \
+    ${CLONED_SOURCE_PACKAGES_DIR:+--cloned-source-packages-dir "$CLONED_SOURCE_PACKAGES_DIR"} \
     ${VERBOSE:+--verbose}

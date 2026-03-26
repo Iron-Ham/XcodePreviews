@@ -432,17 +432,36 @@ func runPreview(_ args: PreviewArgs) {
     exit(code)
   }
 
+  // Auto-detect workspace alongside project for better SPM resolution
+  var workspacePath = args.workspace
+  if workspacePath == nil {
+    workspacePath = findWorkspaceAlongsideProject(projectPath)
+    if let ws = workspacePath {
+      log(.info, "Auto-detected workspace: \(ws)")
+    }
+  }
+
+  // Find existing SourcePackages directory for SPM dependency resolution
+  let clonedSourcePackagesDir = findClonedSourcePackagesDir(
+    projectDir: projectDir,
+    projectPath: projectPath
+  )
+  if let dir = clonedSourcePackagesDir {
+    log(.info, "Using existing source packages: \(dir)")
+  }
+
   // Build
   log(.info, "Building PreviewHost...")
   let builder = BuildRunner()
   let appPath: String
   do {
     appPath = try builder.build(
-      projectPath: args.workspace == nil ? projectPath : nil,
-      workspacePath: args.workspace,
+      projectPath: workspacePath == nil ? projectPath : nil,
+      workspacePath: workspacePath,
       scheme: "PreviewHost",
       simulatorUDID: simUDID,
       derivedDataPath: derivedDataPath,
+      clonedSourcePackagesDirPath: clonedSourcePackagesDir,
       isVerbose: args.isVerbose
     )
   } catch {
@@ -614,6 +633,75 @@ func detectSourceDir(
       return dir
     }
     dir = parent
+  }
+
+  return nil
+}
+
+/// Find a workspace file alongside the project for better SPM resolution.
+///
+/// NOTE: The SourcePackages discovery logic below is intentionally duplicated
+/// in scripts/preview (lines ~289-308). Keep both in sync when changing.
+func findWorkspaceAlongsideProject(_ projectPath: String) -> String? {
+  let projectDir = (projectPath as NSString).deletingLastPathComponent
+  let fm = FileManager.default
+  guard let contents = try? fm.contentsOfDirectory(atPath: projectDir) else { return nil }
+
+  let projectName = ((projectPath as NSString).lastPathComponent as NSString)
+    .deletingPathExtension
+
+  var candidates = [String]()
+  for item in contents where item.hasSuffix(".xcworkspace") {
+    // Skip workspaces embedded inside .xcodeproj bundles
+    if item.contains(".xcodeproj") { continue }
+    candidates.append(item)
+  }
+
+  // Prefer workspace whose name matches the project (e.g., MyApp.xcworkspace for MyApp.xcodeproj)
+  if let match = candidates.first(where: {
+    ($0 as NSString).deletingPathExtension == projectName
+  }) {
+    return (projectDir as NSString).appendingPathComponent(match)
+  }
+
+  // Fall back to first non-Pods workspace
+  if let fallback = candidates.first(where: { !$0.hasPrefix("Pods") }) {
+    return (projectDir as NSString).appendingPathComponent(fallback)
+  }
+
+  return candidates.first.map { (projectDir as NSString).appendingPathComponent($0) }
+}
+
+/// Search for an existing cloned SourcePackages directory from prior builds.
+func findClonedSourcePackagesDir(projectDir: String, projectPath: String) -> String? {
+  let fm = FileManager.default
+
+  // 1. Check workspace-adjacent SourcePackages/
+  let sourcePackages = (projectDir as NSString).appendingPathComponent("SourcePackages")
+  if fm.fileExists(atPath: sourcePackages) {
+    return sourcePackages
+  }
+
+  // 2. Check Tuist/.build/ (Tuist 4.x SPM resolution)
+  let tuistBuild = (projectDir as NSString).appendingPathComponent("Tuist/.build")
+  if fm.fileExists(atPath: tuistBuild) {
+    return tuistBuild
+  }
+
+  // 3. Search default DerivedData for matching project
+  let projectName = ((projectPath as NSString).lastPathComponent as NSString)
+    .deletingPathExtension
+  let defaultDD = (NSHomeDirectory() as NSString).appendingPathComponent(
+    "Library/Developer/Xcode/DerivedData"
+  )
+  if let items = try? fm.contentsOfDirectory(atPath: defaultDD) {
+    for item in items where item.hasPrefix("\(projectName)-") {
+      let candidate = (defaultDD as NSString).appendingPathComponent(item)
+      let spDir = (candidate as NSString).appendingPathComponent("SourcePackages")
+      if fm.fileExists(atPath: spDir) {
+        return spDir
+      }
+    }
   }
 
   return nil

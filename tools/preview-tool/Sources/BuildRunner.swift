@@ -38,6 +38,7 @@ public struct BuildRunner {
     simulatorUDID: String,
     derivedDataPath: String,
     packageCachePath: String? = nil,
+    clonedSourcePackagesDirPath: String? = nil,
     isVerbose: Bool
   ) throws -> String {
     var arguments = [
@@ -52,6 +53,10 @@ public struct BuildRunner {
 
     if let cachePath = packageCachePath {
       arguments += ["-packageCachePath", cachePath]
+    }
+
+    if let clonedPath = clonedSourcePackagesDirPath {
+      arguments += ["-clonedSourcePackagesDirPath", clonedPath]
     }
 
     if let workspace = workspacePath {
