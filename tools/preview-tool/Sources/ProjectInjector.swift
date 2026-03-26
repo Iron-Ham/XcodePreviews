@@ -154,11 +154,17 @@ public struct ProjectInjector {
       }
     }
 
-    // Forward SPM package product dependencies
+    // Collect full transitive closure of native-target dependencies (BFS)
+    let allTransitiveDeps = collectTransitiveDependencies(from: depTargets)
+    if allTransitiveDeps.count > depTargets.count {
+      log(.info, "Transitive dependencies: \(allTransitiveDeps.map(\.name).joined(separator: ", "))")
+    }
+
+    // Forward SPM package product dependencies from ALL transitive deps
     previewTarget.packageProductDependencies = previewTarget.packageProductDependencies ?? []
     var seenPackages = Set<String>()
 
-    for dep in depTargets {
+    for dep in allTransitiveDeps {
       for pkgDep in dep.packageProductDependencies ?? [] {
         let productName = pkgDep.productName
         guard !seenPackages.contains(productName) else { continue }
@@ -191,7 +197,7 @@ public struct ProjectInjector {
     // Find and add resource bundle targets
     try addResourceBundles(
       to: previewTarget,
-      depTargets: depTargets,
+      allTransitiveDeps: allTransitiveDeps,
       projectName: (projectPath as NSString).lastPathComponent
         .replacingOccurrences(of: ".xcodeproj", with: ""),
       pbxproj: pbxproj
@@ -342,6 +348,30 @@ public struct ProjectInjector {
     }
 
     return depTargets
+  }
+
+  /// BFS walk to collect all transitive native-target dependencies.
+  private func collectTransitiveDependencies(
+    from roots: [PBXNativeTarget]
+  ) -> [PBXNativeTarget] {
+    var visited = Set<String>()
+    var result = [PBXNativeTarget]()
+    var queue = roots
+    var queueIndex = 0
+    while queueIndex < queue.count {
+      let t = queue[queueIndex]
+      queueIndex += 1
+      let key = t.uuid
+      guard !visited.contains(key) else { continue }
+      visited.insert(key)
+      result.append(t)
+      for dep in t.dependencies {
+        if let target = dep.target as? PBXNativeTarget {
+          queue.append(target)
+        }
+      }
+    }
+    return result
   }
 
   private func getDeploymentTarget(
@@ -547,25 +577,12 @@ public struct ProjectInjector {
 
   private func addResourceBundles(
     to previewTarget: PBXNativeTarget,
-    depTargets: [PBXNativeTarget],
+    allTransitiveDeps: [PBXNativeTarget],
     projectName: String,
     pbxproj: PBXProj
   ) throws {
-    // Collect all transitive dependency names (BFS, index-based)
-    var allDepNames = Set<String>()
-    var queue = depTargets
-    var queueIndex = 0
-    while queueIndex < queue.count {
-      let t = queue[queueIndex]
-      queueIndex += 1
-      guard !allDepNames.contains(t.name) else { continue }
-      allDepNames.insert(t.name)
-      for dep in t.dependencies {
-        if let target = dep.target as? PBXNativeTarget {
-          queue.append(target)
-        }
-      }
-    }
+    // allTransitiveDeps is already the full transitive closure
+    let allDepNames = Set(allTransitiveDeps.map(\.name))
 
     // Match bundle targets
     var bundleTargets = [PBXNativeTarget]()

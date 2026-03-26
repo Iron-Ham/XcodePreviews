@@ -17,13 +17,14 @@
 #   --wait <seconds>       Wait time after launch before capture (default: 3)
 #   --clean                Clean build before building
 #   --derived-data <path>  Custom derived data path
+#   --cloned-source-packages-dir <path>  Existing SourcePackages for SPM resolution
 #   --verbose              Show build output
 #
 # Examples:
 #   xcode-preview.sh --project MyApp.xcodeproj --scheme MyApp
 #   xcode-preview.sh --workspace MyApp.xcworkspace --scheme MyApp --simulator "iPhone 15"
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -36,6 +37,7 @@ OUTPUT_PATH="/tmp/preview.png"
 WAIT_TIME=3
 CLEAN_BUILD="false"
 DERIVED_DATA="/tmp/xcode-preview-derived-data"
+CLONED_SOURCE_PACKAGES_DIR=""
 VERBOSE="false"
 
 # Colors
@@ -84,6 +86,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --derived-data)
             DERIVED_DATA="$2"
+            shift 2
+            ;;
+        --cloned-source-packages-dir)
+            CLONED_SOURCE_PACKAGES_DIR="$2"
             shift 2
             ;;
         --verbose)
@@ -187,6 +193,10 @@ main() {
     BUILD_ARGS+=("-scheme" "$SCHEME")
     BUILD_ARGS+=("-destination" "platform=iOS Simulator,id=$SIM_UDID")
     BUILD_ARGS+=("-derivedDataPath" "$DERIVED_DATA")
+
+    if [[ -n "$CLONED_SOURCE_PACKAGES_DIR" ]]; then
+        BUILD_ARGS+=("-clonedSourcePackagesDirPath" "$CLONED_SOURCE_PACKAGES_DIR")
+    fi
 
     if [[ "$CLEAN_BUILD" == "true" ]]; then
         BUILD_ARGS+=("clean")
