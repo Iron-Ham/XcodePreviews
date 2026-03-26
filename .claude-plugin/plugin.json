@@ -1,7 +1,7 @@
 {
   "name": "preview-build",
   "description": "Build and capture SwiftUI previews for visual analysis. Supports Xcode projects, SPM packages, and standalone Swift files.",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "author": { "name": "Iron-Ham" },
   "repository": "https://github.com/Iron-Ham/XcodePreviews",
   "license": "MIT",
