@@ -270,19 +270,99 @@ public struct ProjectInjector {
   // MARK: Private
 
   private func removeExisting(from pbxproj: PBXProj) {
-    // Remove target
-    if let existing = pbxproj.nativeTargets.first(where: { $0.name == "PreviewHost" }) {
-      pbxproj.delete(object: existing)
+    // Remove ALL PreviewHost targets — prior buggy cleanups may have left
+    // multiple leaked copies, and each new run adds another.
+    let targets = pbxproj.nativeTargets.filter { $0.name == "PreviewHost" }
+    let productsGroup = (try? pbxproj.rootGroup())?.children.first(where: {
+      $0.name == "Products" || $0.path == "Products"
+    }) as? PBXGroup
+
+    for target in targets {
+      // Build phases own their build files.
+      for phase in target.buildPhases {
+        for buildFile in phase.files ?? [] {
+          pbxproj.delete(object: buildFile)
+        }
+        pbxproj.delete(object: phase)
+      }
+
+      // Configuration list owns its individual configurations.
+      if let configList = target.buildConfigurationList {
+        for config in configList.buildConfigurations {
+          pbxproj.delete(object: config)
+        }
+        pbxproj.delete(object: configList)
+      }
+
+      // Target dependencies + their container item proxies.
+      for dep in target.dependencies {
+        if let proxy = dep.targetProxy {
+          pbxproj.delete(object: proxy)
+        }
+        pbxproj.delete(object: dep)
+      }
+
+      // SPM package product dependency stubs forwarded onto the target.
+      for pkgDep in target.packageProductDependencies ?? [] {
+        pbxproj.delete(object: pkgDep)
+      }
+
+      // Product reference (PreviewHost.app) — also drop from Products group.
+      if let product = target.product {
+        productsGroup?.children.removeAll { $0 === product }
+        pbxproj.delete(object: product)
+      }
+
+      // Drop from project's targets list, then delete the target itself.
+      for project in pbxproj.projects {
+        project.targets.removeAll { $0 === target }
+      }
+      pbxproj.delete(object: target)
     }
-    // Remove group
-    if
-      let rootGroup = try? pbxproj.rootGroup(),
-      let previewGroup = rootGroup.children.first(where: {
-        $0.name == "PreviewHost" || $0.path == "PreviewHost"
-      })
-    {
-      rootGroup.children.removeAll { $0 === previewGroup }
+
+    // Remove ALL "PreviewHost" groups (not just the first) plus their children.
+    if let rootGroup = try? pbxproj.rootGroup() {
+      removePreviewHostGroups(under: rootGroup, pbxproj: pbxproj)
+
+      // Scrub orphan PreviewHost.app file refs left behind in Products from
+      // earlier broken cleanups.
+      if let productsGroup {
+        let orphans = productsGroup.children.filter {
+          ($0 as? PBXFileReference)?.path == "PreviewHost.app"
+        }
+        for orphan in orphans {
+          productsGroup.children.removeAll { $0 === orphan }
+          pbxproj.delete(object: orphan)
+        }
+      }
     }
+  }
+
+  private func removePreviewHostGroups(under group: PBXGroup, pbxproj: PBXProj) {
+    let matches = group.children.compactMap { $0 as? PBXGroup }
+      .filter { $0.name == "PreviewHost" || $0.path == "PreviewHost" }
+
+    for match in matches {
+      deleteGroupRecursively(match, pbxproj: pbxproj)
+      group.children.removeAll { $0 === match }
+    }
+
+    for child in group.children {
+      if let subgroup = child as? PBXGroup {
+        removePreviewHostGroups(under: subgroup, pbxproj: pbxproj)
+      }
+    }
+  }
+
+  private func deleteGroupRecursively(_ group: PBXGroup, pbxproj: PBXProj) {
+    for child in group.children {
+      if let subgroup = child as? PBXGroup {
+        deleteGroupRecursively(subgroup, pbxproj: pbxproj)
+      } else {
+        pbxproj.delete(object: child)
+      }
+    }
+    pbxproj.delete(object: group)
   }
 
   private func detectAppTarget(
