@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PreviewToolLib
 
@@ -313,19 +314,7 @@ func runPreview(_ args: PreviewArgs) {
       ? String(swiftFile.dropFirst(projectDir.count + 1))
       : swiftFile
 
-    if let range = relative.range(of: #"Modules/([^/]+)/"#, options: .regularExpression) {
-      let match = relative[range]
-      let parts = match.split(separator: "/")
-      if parts.count >= 2 {
-        targetName = String(parts[1])
-      }
-    } else if let range = relative.range(of: #"Sources/([^/]+)/"#, options: .regularExpression) {
-      let match = relative[range]
-      let parts = match.split(separator: "/")
-      if parts.count >= 2 {
-        targetName = String(parts[1])
-      }
-    }
+    targetName = detectModuleName(fromRelativePath: relative)
     if let t = targetName {
       log(.info, "Auto-detected target: \(t)")
     }
@@ -368,8 +357,12 @@ func runPreview(_ args: PreviewArgs) {
     exit(1)
   }
 
-  // PID-isolated derived data
-  let derivedDataPath = "/tmp/preview-dynamic-dd-\(ProcessInfo.processInfo.processIdentifier)"
+  // Stable per-project derived data (keyed by hashed full path, not PID) so
+  // repeat captures reuse the built dependency graph instead of a cold
+  // rebuild. Shared across invocations now, so it's lock-guarded at build
+  // time below and pruned here since it's no longer removed after each run.
+  pruneStaleDerivedData()
+  let derivedDataPath = "/tmp/preview-dynamic-dd-\((projectPath as NSString).lastPathComponent)-\(stableHash(projectPath))"
   let previewDir = (projectDir as NSString).appendingPathComponent(
     ".preview-host-\(ProcessInfo.processInfo.processIdentifier)"
   )
@@ -443,9 +436,8 @@ func runPreview(_ args: PreviewArgs) {
         log(.warning, "Failed to clean up project: \(error)")
       }
     }
-    do { try fm.removeItem(atPath: derivedDataPath) } catch {
-      logVerbose("Failed to remove derived data: \(error)")
-    }
+    // Not removed here (unlike previewDir) -- stays cached for the next run;
+    // pruneStaleDerivedData() reclaims it once it's old enough.
     exit(code)
   }
 
@@ -472,15 +464,17 @@ func runPreview(_ args: PreviewArgs) {
   let builder = BuildRunner()
   let appPath: String
   do {
-    appPath = try builder.build(
-      projectPath: workspacePath == nil ? projectPath : nil,
-      workspacePath: workspacePath,
-      scheme: "PreviewHost",
-      simulatorUDID: simUDID,
-      derivedDataPath: derivedDataPath,
-      clonedSourcePackagesDirPath: clonedSourcePackagesDir,
-      isVerbose: args.isVerbose
-    )
+    appPath = try withDerivedDataLock(derivedDataPath) {
+      try builder.build(
+        projectPath: workspacePath == nil ? projectPath : nil,
+        workspacePath: workspacePath,
+        scheme: "PreviewHost",
+        simulatorUDID: simUDID,
+        derivedDataPath: derivedDataPath,
+        clonedSourcePackagesDirPath: clonedSourcePackagesDir,
+        isVerbose: args.isVerbose
+      )
+    }
   } catch {
     log(.error, "\(error)")
     cleanupAndExit(1)
@@ -608,6 +602,65 @@ func resolveAbsolutePath(_ path: String) -> String {
   if path.hasPrefix("/") { return path }
   let cwd = FileManager.default.currentDirectoryPath
   return (cwd as NSString).appendingPathComponent(path)
+}
+
+/// Directory name immediately after the leftmost "Sources" or "Modules" path
+/// component -- component-exact match, not substring, so "AppModules/" or a
+/// nested "Modules" subfolder inside a package's own Sources dir can't shadow
+/// the real target name. Requires a further component (not the terminal file
+/// itself), matching a `<Marker>/<Name>/...` layout.
+func detectModuleName(fromRelativePath relative: String) -> String? {
+  let components = relative.split(separator: "/").map(String.init)
+  let markers: Set<String> = ["Sources", "Modules"]
+  guard
+    let idx = components.indices.first(where: { markers.contains(components[$0]) }),
+    idx + 2 < components.count
+  else { return nil }
+  return components[idx + 1]
+}
+
+/// Removes /tmp/preview-dynamic-dd-* directories untouched for 14+ days.
+/// Derived data is no longer deleted after each run, so without this every
+/// distinct project ever previewed would accumulate one permanently.
+func pruneStaleDerivedData(olderThanDays days: Int = 14) {
+  let fm = FileManager.default
+  guard let entries = try? fm.contentsOfDirectory(atPath: "/tmp") else { return }
+  let cutoff = Date().addingTimeInterval(-Double(days) * 86400)
+  for entry in entries where entry.hasPrefix("preview-dynamic-dd-") {
+    let path = "/tmp/\(entry)"
+    guard
+      let attrs = try? fm.attributesOfItem(atPath: path),
+      let modified = attrs[.modificationDate] as? Date,
+      modified < cutoff
+    else { continue }
+    try? fm.removeItem(atPath: path)
+  }
+}
+
+/// Serializes concurrent `preview-tool` invocations against the same derived
+/// data directory -- it's shared/stable across processes now (keyed by
+/// project path, not PID), so concurrent xcodebuild runs would otherwise race.
+func withDerivedDataLock<T>(_ derivedDataPath: String, _ body: () throws -> T) rethrows -> T {
+  let lockPath = derivedDataPath + ".lock"
+  FileManager.default.createFile(atPath: lockPath, contents: nil)
+  let fd = open(lockPath, O_RDWR | O_CREAT, 0o644)
+  defer { if fd >= 0 { close(fd) } }
+  if fd >= 0 { flock(fd, LOCK_EX) }
+  defer { if fd >= 0 { flock(fd, LOCK_UN) } }
+  return try body()
+}
+
+/// Deterministic 64-bit FNV-1a hash, hex-encoded. Unlike Swift's `Hasher`
+/// (seeded randomly per process launch), this is stable across separate
+/// `preview-tool` invocations -- required for a cache key that's meant to be
+/// reused between runs.
+func stableHash(_ string: String) -> String {
+  var hash: UInt64 = 0xcbf29ce484222325
+  for byte in string.utf8 {
+    hash ^= UInt64(byte)
+    hash = hash.multipliedReportingOverflow(by: 0x100000001b3).partialValue
+  }
+  return String(hash, radix: 16)
 }
 
 func findFirstXcodeproj(in directory: String) -> String? {
@@ -780,13 +833,7 @@ func runPreviewSPM(_ args: PreviewSPMArgs) {
       ? String(swiftFile.dropFirst(packageDir.count + 1))
       : swiftFile
 
-    if let range = relative.range(of: #"Sources/([^/]+)/"#, options: .regularExpression) {
-      let match = relative[range]
-      let parts = match.split(separator: "/")
-      if parts.count >= 2 {
-        moduleName = String(parts[1])
-      }
-    }
+    moduleName = detectModuleName(fromRelativePath: relative)
 
     if moduleName == nil {
       logVerbose("Could not auto-detect module from path: \(relative)")
