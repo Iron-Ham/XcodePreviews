@@ -105,19 +105,25 @@ public struct BuildRunner {
 
   // MARK: Private
 
+  /// Picks the most-recently-built match, not the first one enumeration order
+  /// happens to yield -- derived data is now persistent across runs, so a
+  /// stale app from an earlier build under a differently-named configuration
+  /// products dir can still be sitting alongside the fresh one.
   private func findApp(in derivedData: String, named appName: String) -> String? {
     let fm = FileManager.default
     guard let enumerator = fm.enumerator(atPath: derivedData) else { return nil }
 
+    var best: (path: String, modified: Date)?
     while let path = enumerator.nextObject() as? String {
-      if path.hasSuffix(appName), path.contains("Build/Products") {
-        let full = (derivedData as NSString).appendingPathComponent(path)
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue {
-          return full
-        }
+      guard path.hasSuffix(appName), path.contains("Build/Products") else { continue }
+      let full = (derivedData as NSString).appendingPathComponent(path)
+      var isDir: ObjCBool = false
+      guard fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue else { continue }
+      let modified = (try? fm.attributesOfItem(atPath: full))?[.modificationDate] as? Date ?? .distantPast
+      if best == nil || modified > best!.modified {
+        best = (full, modified)
       }
     }
-    return nil
+    return best?.path
   }
 }

@@ -95,12 +95,22 @@ public struct ProjectInjector {
     )
     logVerbose("Generated host app: \(hostPath)")
 
-    // Create PreviewHost target
+    // Mirror the project's configuration names so PreviewHost and SPM package
+    // products build into the same <config>-<platform> products dir. Resolved
+    // once here (not inside createTarget) so the scheme below can't diverge
+    // from what PreviewHost's own configuration list actually contains.
+    let projectConfigList = pbxproj.projects.first?.buildConfigurationList
+    let rawConfigNames = projectConfigList?.buildConfigurations.map(\.name) ?? []
+    let configNames = rawConfigNames.isEmpty ? ["Debug", "Release"] : rawConfigNames
+    let rawDefaultConfig = projectConfigList?.defaultConfigurationName ?? configNames[0]
+    let defaultConfigName = configNames.contains(rawDefaultConfig) ? rawDefaultConfig : configNames[0]
     let previewTarget = try createTarget(
       in: pbxproj,
-      deploymentTarget: deploymentTarget
+      deploymentTarget: deploymentTarget,
+      configurationNames: configNames,
+      defaultConfiguration: defaultConfigName
     )
-    log(.info, "Created PreviewHost target")
+    log(.info, "Created PreviewHost target (configs: \(configNames.joined(separator: ", ")))")
 
     // Add PreviewHost source files (the generated app)
     let mainGroup = try pbxproj.rootGroup()
@@ -190,6 +200,39 @@ public struct ProjectInjector {
       }
     }
 
+    // Ensure the previewed file's OWN owning SPM package is a direct product
+    // dependency of PreviewHost -- pbxproj doesn't expose nested local-package
+    // edges, so a package reachable only transitively is otherwise invisible.
+    if let moduleName = targetName, !moduleName.isEmpty,
+       !seenPackages.contains(moduleName),
+       let packageDir = findEnclosingPackageDir(for: swiftFile, projectDir: projectDir) {
+      let relativePackagePath = relativePath(from: projectDir, to: packageDir)
+      let priorChildren = Set(mainGroup?.children.map(\.uuid) ?? [])
+      do {
+        _ = try pbxproj.rootObject?.addLocalSwiftPackage(
+          path: Path(relativePackagePath),
+          productName: moduleName,
+          targetName: previewTarget.name,
+          addFileReference: true
+        )
+        // addLocalSwiftPackage drops the folder reference it creates at the
+        // project root; move it under the PreviewHost group so `removeExisting`
+        // cleans it up like everything else this injects, instead of leaking
+        // a stray reference into the real project on every run.
+        if
+          let mainGroup,
+          let newRef = mainGroup.children.first(where: { !priorChildren.contains($0.uuid) })
+        {
+          mainGroup.children.removeAll { $0.uuid == newRef.uuid }
+          previewGroup?.children.append(newRef)
+        }
+        seenPackages.insert(moduleName)
+        log(.info, "Added own-package dependency: \(moduleName) (\(relativePackagePath))")
+      } catch {
+        log(.warning, "Could not add own-package dependency for \(moduleName): \(error)")
+      }
+    }
+
     if !seenPackages.isEmpty {
       log(.info, "Added \(seenPackages.count) SPM package dependencies")
     }
@@ -202,6 +245,33 @@ public struct ProjectInjector {
         .replacingOccurrences(of: ".xcodeproj", with: ""),
       pbxproj: pbxproj
     )
+
+    // Embed dynamically-linked SPM package frameworks. Xcode auto-embeds binary
+    // XCFrameworks for our injected target, but leaves source-package dynamic
+    // frameworks (BUILT_PRODUCTS_DIR/PackageFrameworks/*) unembedded -> the app
+    // crashes at launch ("dyld: Library not loaded: @rpath/<Name>.framework").
+    // The build "succeeds" and the capture just shows the home screen. Copy them
+    // in and ad-hoc sign (the simulator doesn't enforce signatures, but keep the
+    // signature valid anyway).
+    let embedScript = PBXShellScriptBuildPhase(
+      name: "Embed Package Frameworks",
+      shellScript: """
+        set -e
+        SRC="${BUILT_PRODUCTS_DIR}/PackageFrameworks"
+        DST="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Frameworks"
+        [ -d "$SRC" ] || exit 0
+        mkdir -p "$DST"
+        for fw in "$SRC"/*.framework; do
+          [ -e "$fw" ] || continue
+          name=$(basename "$fw")
+          rm -rf "$DST/$name"
+          cp -R "$fw" "$DST/$name"
+          codesign --force --sign - --timestamp=none "$DST/$name" || echo "warning: codesign failed for $name (simulator doesn't enforce signatures, continuing)" >&2
+        done
+        """
+    )
+    pbxproj.add(object: embedScript)
+    previewTarget.buildPhases.append(embedScript)
 
     // Save project
     do {
@@ -231,7 +301,7 @@ public struct ProjectInjector {
         runnable: XCScheme.Runnable(
           buildableReference: buildableRef
         ),
-        buildConfiguration: "Debug"
+        buildConfiguration: defaultConfigName
       ),
       profileAction: nil,
       analyzeAction: nil,
@@ -403,9 +473,55 @@ public struct ProjectInjector {
       : swiftFile
     let firstDir = relative.split(separator: "/").first.map(String.init) ?? ""
 
-    return pbxproj.nativeTargets.first {
+    if let byDir = pbxproj.nativeTargets.first(where: {
       $0.productType == .application && $0.name == firstDir
+    }) {
+      return byDir
     }
+
+    // Final fallback: the sole application target. SPM-package-heavy projects
+    // (e.g. a thin app shell with all real code in local packages) put the
+    // previewed file under a package dir, not under any app target's source
+    // dir, so the heuristics above miss it -- but we still need the app
+    // target's package product dependencies forwarded to PreviewHost.
+    let appTargets = pbxproj.nativeTargets.filter { $0.productType == .application }
+    if appTargets.count > 1 {
+      log(.warning, "Multiple application targets (\(appTargets.map(\.name).joined(separator: ", "))) and none matched by source/directory heuristics -- app-target package dependencies won't be forwarded. Pass --target to disambiguate.")
+    }
+    return appTargets.count == 1 ? appTargets.first : nil
+  }
+
+  /// Walk up from `filePath` to find the nearest ancestor directory containing a
+  /// `Package.swift` -- i.e. the SPM package that owns the previewed file.
+  /// Bounded at the project directory's own parent so a sibling `Packages/`
+  /// layout still resolves, without walking all the way to the filesystem
+  /// root and picking up an unrelated ancestor manifest.
+  private func findEnclosingPackageDir(for filePath: String, projectDir: String) -> String? {
+    let boundary = (projectDir as NSString).deletingLastPathComponent
+    var dir = (filePath as NSString).deletingLastPathComponent
+    while dir.count > boundary.count {
+      let manifest = (dir as NSString).appendingPathComponent("Package.swift")
+      if FileManager.default.fileExists(atPath: manifest) { return dir }
+      dir = (dir as NSString).deletingLastPathComponent
+    }
+    return nil
+  }
+
+  /// Relative path from `base` to `target`, using `../` to climb out when
+  /// `target` isn't nested under `base` -- unlike a prefix-strip, this stays
+  /// relative (required by `addLocalSwiftPackage`) for sibling directories too.
+  private func relativePath(from base: String, to target: String) -> String {
+    let baseComponents = base.split(separator: "/").map(String.init)
+    let targetComponents = target.split(separator: "/").map(String.init)
+    var shared = 0
+    while
+      shared < baseComponents.count, shared < targetComponents.count,
+      baseComponents[shared] == targetComponents[shared]
+    {
+      shared += 1
+    }
+    let ups = Array(repeating: "..", count: baseComponents.count - shared)
+    return (ups + targetComponents[shared...]).joined(separator: "/")
   }
 
   private func findDependencyTargets(
@@ -526,7 +642,9 @@ public struct ProjectInjector {
 
   private func createTarget(
     in pbxproj: PBXProj,
-    deploymentTarget: String
+    deploymentTarget: String,
+    configurationNames: [String],
+    defaultConfiguration: String
   ) throws -> PBXNativeTarget {
     let buildSettings: BuildSettings = [
       "PRODUCT_NAME": "PreviewHost",
@@ -539,16 +657,22 @@ public struct ProjectInjector {
       "IPHONEOS_DEPLOYMENT_TARGET": .string(deploymentTarget),
       "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"],
       "SDKROOT": "iphoneos",
+      "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
     ]
 
-    let debugConfig = XCBuildConfiguration(name: "Debug", buildSettings: buildSettings)
-    let releaseConfig = XCBuildConfiguration(name: "Release", buildSettings: buildSettings)
-    pbxproj.add(object: debugConfig)
-    pbxproj.add(object: releaseConfig)
+    // configurationNames/defaultConfiguration are pre-resolved by the caller
+    // (non-empty, defaultConfiguration guaranteed to be a member) so this
+    // target's own config list can't diverge from what the caller uses
+    // elsewhere (e.g. the scheme's buildConfiguration).
+    let configs = configurationNames.map { name -> XCBuildConfiguration in
+      let cfg = XCBuildConfiguration(name: name, buildSettings: buildSettings)
+      pbxproj.add(object: cfg)
+      return cfg
+    }
 
     let configList = XCConfigurationList(
-      buildConfigurations: [debugConfig, releaseConfig],
-      defaultConfigurationName: "Debug"
+      buildConfigurations: configs,
+      defaultConfigurationName: defaultConfiguration
     )
     pbxproj.add(object: configList)
 
